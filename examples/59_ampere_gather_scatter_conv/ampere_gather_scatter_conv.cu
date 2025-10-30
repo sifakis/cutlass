@@ -72,13 +72,13 @@ using namespace cute;
 using example::IndexedGather;
 using example::CustomStride;
 
-template<class Operator, class FilterTensor, class ActivationTensor, class OutputTensor>
+template<class Operator, class FilterTensor, class ActivationTensor, class ActivationTensorIndex, class OutputTensor>
 __global__
 __launch_bounds__(Operator::MaxThreadsPerBlock, Operator::MinBlocksPerMultiprocessor)
-void kernel_entrypoint(FilterTensor mFlt, ActivationTensor mAct, OutputTensor mOut) {
+  void kernel_entrypoint(FilterTensor mFlt, ActivationTensor mAct, ActivationTensorIndex mActI, OutputTensor mOut) {
   extern __shared__ char smem_buf[];
   Operator op;
-  op(mFlt, mAct, mOut, smem_buf);
+  op(mFlt, mAct, mActI, mOut, smem_buf);
 }
 
 int ampere_dense_conv_fprop(
@@ -141,15 +141,15 @@ int ampere_dense_conv_fprop(
   dim3 lauch_grid {static_cast<uint32_t>(size<1,1>(gOutput_mn)), static_cast<uint32_t>(size<1,0>(gOutput_mn)), 1};
 
   CHECK_CUDA(cudaFuncSetAttribute(
-    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedAct), decltype(mOutput)>,
+    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedAct), decltype(mXformedAct), decltype(mOutput)>,
     cudaFuncAttributeMaxDynamicSharedMemorySize,
     smem_size));
 
   CHECK_CUDA(cudaEventRecord(start));
   for (int i = 0; i < num_iterations; ++i) {
-    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedAct), decltype(mOutput)>
+    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedAct), decltype(mXformedAct), decltype(mOutput)>
       <<<lauch_grid, AmpereUnpredicatedFprop::MaxThreadsPerBlock, smem_size>>>(
-        mFilter, mXformedAct, mOutput);
+      mFilter, mXformedAct, mXformedAct, mOutput);
   }
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaEventSynchronize(stop));
@@ -254,7 +254,7 @@ int ampere_gather_scatter_conv_fprop(
   print("Filter layout          ( K,        (C,T,R,S)) = "); print(filter_layout);               print("\n");
 
   CHECK_CUDA(cudaFuncSetAttribute(
-    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mOutputScatter)>,
+    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActGather), decltype(mOutputScatter)>,
     cudaFuncAttributeMaxDynamicSharedMemorySize,
     smem_size));
 
@@ -263,9 +263,9 @@ int ampere_gather_scatter_conv_fprop(
   CHECK_CUDA(cudaEventCreate(&stop));
   CHECK_CUDA(cudaEventRecord(start));
   for (int i = 0; i < num_iterations; ++i) {
-    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mOutputScatter)>
+    kernel_entrypoint<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActGather), decltype(mOutputScatter)>
       <<<lauch_grid, AmpereUnpredicatedFprop::MaxThreadsPerBlock, smem_size>>>(
-          mFilter, mXformedActGather, mOutputScatter);
+          mFilter, mXformedActGather, mXformedActGather, mOutputScatter);
   }
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaEventSynchronize(stop));

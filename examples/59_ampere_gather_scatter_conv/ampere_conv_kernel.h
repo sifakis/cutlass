@@ -40,6 +40,9 @@
 #include "cutlass/gemm/dispatch_policy.hpp"
 #include "cutlass/gemm/collective/collective_mma.hpp"
 
+#include "dispatch_policy_custom.hpp"
+#include "sm80_mma_multistage_custom.hpp"
+
 using namespace cute;
 
 struct AmpereUnpredicatedFprop {
@@ -176,15 +179,16 @@ struct AmpereUnpredicatedFprop {
   //
   // Conv functor
   //
-  template <class EngineFlt, class TensorActivation, class TensorOutput>
+  template <class EngineFlt, class TensorActivation, class TensorActivationIndex, class TensorOutput>
   void __device__
   operator()(cute::Tensor<EngineFlt, GmemLayoutFlt> mFlt, // ( K,        (C,T,R,S))
              TensorActivation                       mAct, // ((N,Z,P,Q), (C,T,R,S))
+             TensorActivationIndex                  mActI,// ((N,Z,P,Q), (C,T,R,S))
              TensorOutput                           mOut, // ( K,        (N,Z,P,Q))
              char* smem_buf) const {
     using namespace cute;
     using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveMma<
-        cutlass::gemm::MainloopSm80CpAsyncUnpredicated<PIPE::value>,
+        cutlass::gemm::MainloopSm80CpAsyncUnpredicatedCustom<PIPE::value>,
         Shape<TileM,TileN,TileK>,
         ElementFlt,
         Underscore, // Ignore the stride, we are passing full cute::Tensor to operator()
