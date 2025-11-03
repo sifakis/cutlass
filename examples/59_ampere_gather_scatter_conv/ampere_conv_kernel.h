@@ -187,7 +187,7 @@ struct AmpereUnpredicatedFprop {
              char* smem_buf) const {
     using namespace cute;
     using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveMma<
-        cutlass::gemm::MainloopSm80CpAsyncUnpredicatedCustom<PIPE::value>,
+        cutlass::gemm::MainloopSm80CpAsyncUnpredicated<PIPE::value>,
         Shape<TileM,TileN,TileK>,
         ElementFlt,
         Underscore, // Ignore the stride, we are passing full cute::Tensor to operator()
@@ -319,16 +319,18 @@ struct AmpereUnpredicatedFprop {
 
     // Set up tensors
     // NOTE: blockIdx.x projects onto act-NDHW mode, y along the flt-K mode for the sake of higher dynamic range in NDHW
-    Tensor gA_mk = local_tile(mFlt, TilerFlt{}, make_coord(_,_));                              // (BLK_M,BLK_K,m',k')
-    Tensor gB_nk = local_tile(mAct, TilerAct{}, make_coord(_,_));                              // (BLK_N,BLK_K,n',_1)
-    Tensor gC_mn = local_tile(mOut, TilerOut{}, make_coord(_,_));                              // (BLK_M,BLK_N,m',n')
+    Tensor gA_mk  = local_tile( mFlt, TilerFlt{}, make_coord(_,_));                            // (BLK_M,BLK_K,m',k')
+    Tensor gB_nk  = local_tile( mAct, TilerAct{}, make_coord(_,_));                            // (BLK_N,BLK_K,n',_1)
+    Tensor gBi_nk = local_tile(mActI, TilerAct{}, make_coord(_,_));                            // (BLK_N,BLK_K,n',_1)
+    Tensor gC_mn  = local_tile( mOut, TilerOut{}, make_coord(_,_));                            // (BLK_M,BLK_N,m',n')
 
     // Compute m_coord and n_coord with their post-tiled shapes
     auto m_coord = idx2crd(int(blockIdx.y), shape<2>(gA_mk));
     auto n_coord = idx2crd(int(blockIdx.x), shape<2>(gB_nk));
-    Tensor gA = gA_mk(_,_,m_coord,_);                                                          // (BLK_M,BLK_K,k')
-    Tensor gB = gB_nk(_,_,n_coord,_);                                                          // (BLK_N,BLK_K,_1)
-    Tensor gC = gC_mn(_,_,m_coord,n_coord);                                                    // (BLK_M,BLK_N)
+    Tensor gA  = gA_mk (_,_,m_coord,_);                                                        // (BLK_M,BLK_K,k')
+    Tensor gB  = gB_nk (_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
+    Tensor gBi = gBi_nk(_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
+    Tensor gC  = gC_mn (_,_,m_coord,n_coord);                                                  // (BLK_M,BLK_N)
 
     auto k_tile_iter = cute::make_coord_iterator(size<2>(gA));
     int k_tile_count = size<2>(gA);
@@ -338,6 +340,7 @@ struct AmpereUnpredicatedFprop {
       accum,
       gA,
       gB,
+      gBi,
       accum,
       k_tile_iter, k_tile_count,
       Underscore{}, // no residue since we do not support predication

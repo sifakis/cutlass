@@ -188,8 +188,10 @@ int ampere_gather_scatter_conv_fprop(
     uint32_t *gather_idx_buf,
     float* filter,
     float* output,
+    float* output_ref,
     uint32_t *scatter_idx_buf,
-    int num_iterations = 1) {
+    int num_iterations = 1,
+    const bool do_ref_check = true) {
   auto D = typename AmpereUnpredicatedFprop::D{};
   auto H = typename AmpereUnpredicatedFprop::H{};
   auto W = typename AmpereUnpredicatedFprop::W{};
@@ -260,6 +262,7 @@ int ampere_gather_scatter_conv_fprop(
   Tensor mXformedActIndex = make_tensor(make_gmem_ptr(activations), xformed_act_index_layout);
   Tensor mFilter = make_tensor(make_gmem_ptr(filter), filter_layout);
   Tensor mOutputScatter = make_tensor(make_gmem_ptr(output), out_composed_layout);  // (K, (N,Z,P,Q))
+  Tensor mOutputRef  = make_tensor(make_gmem_ptr(output_ref), out_composed_layout);
 
   Tensor gOutput_mn = zipped_divide(mOutputScatter, typename AmpereUnpredicatedFprop::TilerOut{}); // ((BLK_M, BLK_N), (m', n'))
   dim3 launch_grid {static_cast<uint32_t>(size<1,1>(gOutput_mn)), static_cast<uint32_t>(size<1,0>(gOutput_mn)), 1};
@@ -299,7 +302,14 @@ int ampere_gather_scatter_conv_fprop(
   printf("Conv TFLOP count = %f\n", tflop_count);
   printf("Conv gather/scatter perf: %fms | TFLOP/s = %f\n", milliseconds, tflops);
 
-  return 0;
+  if (do_ref_check) {
+    printf("Running host reference check ...\n");
+    return fprop_reference(mFilter, mXformedActGather, mOutputScatter, mOutputRef);
+  }
+  else {
+    return 0;
+  }
+
 }
 
 int
@@ -363,6 +373,7 @@ main(int argc, char const** argv) {
   thrust::universal_vector<float> filter_data(size_t(cute::size(filter_layout)), float(0));
   thrust::universal_vector<float> output_data(size_t(cute::size(output_layout)), float(0));
   thrust::universal_vector<float> output_data_ref(size_t(cute::size(output_layout)), float(0));
+  thrust::universal_vector<float> output_data_gather_scatter(size_t(cute::size(output_layout)), float(0));
   std::cout << "done.\n";
 
   // init tensors
@@ -396,7 +407,8 @@ main(int argc, char const** argv) {
     output_data.data().get(),
     output_data_ref.data().get(),
     num_iterations,
-    do_host_ref_check);
+    do_host_ref_check
+  );
 
   // launch gather/scatter
   std::cout << "\nRunning gather/scatter fprop kernel\n";
@@ -405,9 +417,12 @@ main(int argc, char const** argv) {
     activation_data.data().get(),
     gather_idx_buf.data().get(),
     filter_data.data().get(),
-    output_data.data().get(),
+    output_data_gather_scatter.data().get(),
+    output_data_ref.data().get(),
     scatter_idx_buf.data().get(),
-    num_iterations);
+    num_iterations,
+    do_host_ref_check
+  );
 
   return passed;
 }

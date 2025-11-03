@@ -155,6 +155,7 @@ struct CollectiveMma<
     class FrgTensorD,
     class TensorA,
     class TensorB,
+    class TensorBi,
     class FrgTensorC,
     class KTileIterator,
     class ResidueMNK
@@ -164,6 +165,7 @@ struct CollectiveMma<
       FrgTensorD &accum,
       TensorA gA,
       TensorB gB,
+      TensorBi gBi,
       FrgTensorC const &src_accum,
       KTileIterator k_tile_iter, int k_tile_count,
       ResidueMNK residue_mnk,
