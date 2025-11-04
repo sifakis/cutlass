@@ -177,6 +177,7 @@ struct CollectiveMma<
     static_assert(is_rmem<FrgTensorD>::value, "D tensor must be rmem resident.");
     static_assert(is_gmem<TensorA>::value,    "A tensor must be gmem resident.");
     static_assert(is_gmem<TensorB>::value,    "B tensor must be gmem resident.");
+    static_assert(is_gmem<TensorBi>::value,   "Bi tensor must be gmem resident.");
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
     static_assert(cute::rank(SmemLayoutA{}) == 3,
       "MainloopSm80CpAsync must have a pipeline mode in the smem layout.");
@@ -191,7 +192,9 @@ struct CollectiveMma<
     CUTE_STATIC_ASSERT_V(size<0>(gA) == size<0>(sA));                          // BLK_M
     CUTE_STATIC_ASSERT_V(size<1>(gA) == size<1>(sA));                          // BLK_K
     CUTE_STATIC_ASSERT_V(size<0>(gB) == size<0>(sB));                          // BLK_N
+    CUTE_STATIC_ASSERT_V(size<0>(gBi) == size<0>(gB));                         // BLK_N
     CUTE_STATIC_ASSERT_V(size<1>(gB) == size<1>(sB));                          // BLK_K
+    CUTE_STATIC_ASSERT_V(size<1>(gBi) == size<1>(gB));                          // BLK_K
     CUTE_STATIC_ASSERT_V(size<1>(sA) == size<1>(sB));                          // BLK_K
     CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sA));        // PIPE
     CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sB));        // PIPE
@@ -206,6 +209,7 @@ struct CollectiveMma<
     Tensor tAsA = gmem_thr_copy_A.partition_D(sA);                             // (ACPY,ACPY_M,ACPY_K,PIPE)
     Tensor tBgB = gmem_thr_copy_B.partition_S(gB);                             // (BCPY,BCPY_N,BCPY_K,k)
     Tensor tBsB = gmem_thr_copy_B.partition_D(sB);                             // (BCPY,BCPY_N,BCPY_K,PIPE)
+    Tensor tBgBi = gmem_thr_copy_B.partition_S(gBi);                           // (BCPY,BCPY_N,BCPY_K,k)
 
     //
     // PREDICATES
@@ -214,6 +218,14 @@ struct CollectiveMma<
     (void) residue_mnk;
     //assert(residue_mnk == make_tuple(0,0,0));
 
+    using test_tensor = decltype(tBgBi(_,_,_,0));
+    using test_layout = typename test_tensor::layout_type;
+
+    if ((threadIdx.x == 0) && (blockIdx.x == 0) && (blockIdx.y == 0) ){
+        print("shape(tBgBi(_,_,_,0))=");print(shape(tBgBi(_,_,_,0)));print("\n");
+        print("shape(tBgB(_,_,_,0))=");print(shape(tBgB(_,_,_,0)));print("\n");
+    }
+    __syncthreads();
     //
     // PREFETCH
     //
