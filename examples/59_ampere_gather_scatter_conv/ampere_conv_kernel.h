@@ -65,7 +65,7 @@ struct AmpereUnpredicatedFprop {
   using K = _128;
 
   // Tiler config
-  using Tiler_K = decltype(cute::min(K{}, _128{}));
+  using Tiler_K = decltype(cute::min(K{}, _32{}));
   using Tiler_C = decltype(cute::min(C{}, _32{}));
   using Tiler_N = _4;
   using TileM = Tiler_K;
@@ -331,6 +331,17 @@ struct AmpereUnpredicatedFprop {
     Tensor gB  = gB_nk (_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
     Tensor gBi = gBi_nk(_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
     Tensor gC  = gC_mn (_,_,m_coord,n_coord);                                                  // (BLK_M,BLK_N)
+
+#if 0
+    if ((threadIdx.x) == 0 && (blockIdx.x == 0) && (blockIdx.y == 0)) {        
+        print("shape(mActI)=");print(shape(mActI));print("\n");
+        print("shape(gBi_nk)=");print(shape(gBi_nk));print("\n");
+        print("shape(gBi)=");print(shape(gBi));print("\n");
+        Tensor dummy = gBi(0,_,0);
+        printf("gBi(0,_,0)=");print(gBi(0,_,0));print("\n");
+    }
+    __syncthreads();
+#endif
 
     auto k_tile_iter = cute::make_coord_iterator(size<2>(gA));
     int k_tile_count = size<2>(gA);

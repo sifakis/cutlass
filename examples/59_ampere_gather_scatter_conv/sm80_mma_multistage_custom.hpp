@@ -218,14 +218,19 @@ struct CollectiveMma<
     (void) residue_mnk;
     //assert(residue_mnk == make_tuple(0,0,0));
 
-    using test_tensor = decltype(tBgBi(_,_,_,0));
-    using test_layout = typename test_tensor::layout_type;
-
+    Tensor tBpBi = make_tensor<bool>(make_shape(size<0>(tBgBi),size<1>(tBgBi),size<2>(tBgBi)));
+    cute::fill(tBpBi, true);
+#if 0
+    // print("pred_shape=");print(shape(tBpBi));print("\n");
     if ((threadIdx.x == 0) && (blockIdx.x == 0) && (blockIdx.y == 0) ){
-        print("shape(tBgBi(_,_,_,0))=");print(shape(tBgBi(_,_,_,0)));print("\n");
-        print("shape(tBgB(_,_,_,0))=");print(shape(tBgB(_,_,_,0)));print("\n");
+        print("shape(gB)=");print(shape(gB));print("\n");
+        print("shape(gBi=");print(shape(gBi));print("\n");
+    //     print("shape(gBi=");print(shape(gBi));print("\n");
+    //     print("shape(tBgBi(_,_,_,0))=");print(shape(tBgBi(_,_,_,0)));print("\n");
+    //     print("shape(tBgB(_,_,_,0))=");print(shape(tBgB(_,_,_,0)));print("\n");
     }
     __syncthreads();
+#endif
     //
     // PREFETCH
     //
@@ -233,8 +238,13 @@ struct CollectiveMma<
     // Start async loads for all pipes but the last
     CUTLASS_PRAGMA_UNROLL
     for (int k_pipe = 0; k_pipe < DispatchPolicy::Stages-1; ++k_pipe) {
-      copy(gmem_tiled_copy_A, tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,k_pipe));
-      copy(gmem_tiled_copy_B, tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
+      // Tensor tBgBi_slice = tBgBi(_,_,_,*k_tile_iter);  
+      // CUTLASS_PRAGMA_UNROLL
+      // for (int i = 0; i < size(tBpBi); i++) {
+      //   tBpBi(i) = (tBgBi_slice(i) != 0xffffffff);
+      // }
+      copy   (gmem_tiled_copy_A,        tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,k_pipe));
+      copy_if(gmem_tiled_copy_B, tBpBi, tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
       cp_async_fence();
       --k_tile_count;
       if (k_tile_count > 0) { ++k_tile_iter; }
@@ -328,8 +338,13 @@ struct CollectiveMma<
         // Copy gmem to smem before computing gemm on each k-pipe
         if (k_block == 0)
         {
-          copy(gmem_tiled_copy_A, tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,smem_pipe_write));
-          copy(gmem_tiled_copy_B, tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,smem_pipe_write));
+          // Tensor tBgBi_slice = tBgBi(_,_,_,*k_tile_iter);  
+          // CUTLASS_PRAGMA_UNROLL
+          //   for (int i = 0; i < size(tBpBi); i++) {
+          //     tBpBi(i) = (tBgBi_slice(i) != 0xffffffff);
+          //   }
+          copy   (gmem_tiled_copy_A,        tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,smem_pipe_write));
+          copy_if(gmem_tiled_copy_B, tBpBi, tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,smem_pipe_write));
           cp_async_fence();
 
           // Advance the tile
