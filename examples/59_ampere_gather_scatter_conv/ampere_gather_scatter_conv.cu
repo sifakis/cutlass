@@ -259,7 +259,7 @@ int ampere_gather_scatter_conv_fprop(
     out_basis_layout);
 
   Tensor mXformedActGather = make_tensor(make_gmem_ptr(activations), xformed_act_composed_layout);
-  Tensor mXformedActIndex = make_tensor(make_gmem_ptr(activations), xformed_act_index_layout);
+  Tensor mXformedActIndex = make_tensor(make_gmem_ptr(gather_idx_buf), xformed_act_index_layout);
   Tensor mFilter = make_tensor(make_gmem_ptr(filter), filter_layout);
   Tensor mOutputScatter = make_tensor(make_gmem_ptr(output), out_composed_layout);  // (K, (N,Z,P,Q))
   Tensor mOutputRef  = make_tensor(make_gmem_ptr(output_ref), out_composed_layout);
@@ -278,7 +278,7 @@ int ampere_gather_scatter_conv_fprop(
   std::cout << "smem_size = " << smem_size << std::endl;
 
   CHECK_CUDA(cudaFuncSetAttribute(
-    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActGather), decltype(mOutputScatter)>,
+    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActIndex), decltype(mOutputScatter)>,
     cudaFuncAttributeMaxDynamicSharedMemorySize,
     smem_size));
 
@@ -287,9 +287,9 @@ int ampere_gather_scatter_conv_fprop(
   CHECK_CUDA(cudaEventCreate(&stop));
   CHECK_CUDA(cudaEventRecord(start));
   for (int i = 0; i < num_iterations; ++i) {
-    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActGather), decltype(mOutputScatter)>
+    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActIndex), decltype(mOutputScatter)>
       <<<launch_grid, AmpereUnpredicatedFprop::MaxThreadsPerBlock, smem_size>>>(
-          mFilter, mXformedActGather, mXformedActGather, mOutputScatter);
+          mFilter, mXformedActGather, mXformedActIndex, mOutputScatter);
   }
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaEventSynchronize(stop));

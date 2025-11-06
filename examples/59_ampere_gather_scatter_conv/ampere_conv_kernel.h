@@ -71,6 +71,7 @@ struct AmpereUnpredicatedFprop {
   using TileM = Tiler_K;
   using TileN = Shape<Tiler_N, Z, P, Q>;
   using TileK = Shape<Tiler_C,_1,_1,_1>;
+  using TileP = Shape<Tiler_N, D, H, W>;  
   using PIPE  = _3;
   using TilerFlt = Shape<TileM, TileK>;
   using TilerAct = Shape<TileN, TileK>;
@@ -97,6 +98,7 @@ struct AmpereUnpredicatedFprop {
     struct {
       ElementFlt sAMatrix[size(TileM{}) * size(TileK{}) * size(PIPE{})];
       ElementAct sBMatrix[size(TileN{}) * size(TileK{}) * size(PIPE{})];
+      bool       sBiMatrix[size(TileP{})];
     } mainloop;
 
     struct {
@@ -332,8 +334,17 @@ struct AmpereUnpredicatedFprop {
     Tensor gBi = gBi_nk(_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
     Tensor gC  = gC_mn (_,_,m_coord,n_coord);                                                  // (BLK_M,BLK_N)
 
+    auto gather_idx_ptr = gBi.data();
+    auto sBi_ptr = &reinterpret_cast<SharedStorage*>(smem_buf)->mainloop.sBiMatrix[0];
+    for (int i = 0; i < sizeof(TileP{}); i += MaxThreadsPerBlock) {
+      sBi_ptr[i+threadIdx.x] = (gather_idx_ptr[i+threadIdx.x] != 0xffffffff);
+      if (sBi_ptr[i+threadIdx.x] == false) printf("Barf\n");
+    }
+    __syncthreads();
+
 #if 0
     if ((threadIdx.x) == 0 && (blockIdx.x == 0) && (blockIdx.y == 0)) {        
+        print("size(TileP{})=");print(size(TileP{}));print("\n");
         print("shape(mActI)=");print(shape(mActI));print("\n");
         print("shape(gBi_nk)=");print(shape(gBi_nk));print("\n");
         print("shape(gBi)=");print(shape(gBi));print("\n");
