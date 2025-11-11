@@ -228,10 +228,10 @@ int ampere_gather_scatter_conv_fprop(
 
   // Input gather index layout
   // inner_layout_index(make_coord((nzpq), (csrt))) => idx_buffer_idx
-  auto xformed_act_index_layout = make_layout(
-    make_shape (make_shape (    N,   Z, P,    Q), make_shape (   C,   T, R,    S)),
-    make_stride(make_stride(D*H*W, H*W, W, _1{}), make_stride(_0{}, H*W, W, _1{})));
-
+  auto gather_index_layout = make_layout(
+    make_shape (make_shape (    N,   D, H,  W  ), make_shape ( C  , _1{}, _1{}, _1{})),
+    make_stride(make_stride(D*H*W, H*W, W, _1{}), make_stride(_0{}, _0{}, _0{}, _0{})));
+  
   // outer_layout(make_coord(idx_buffer_idx, dense_c_idx)) => idx
   // IndexedGather obtains idx by applying (gmem_base_ptr + gather_idx_buf[idx_buffer_idx] + dense_offset)
   auto xformed_act_gather_outer = make_layout(
@@ -259,7 +259,7 @@ int ampere_gather_scatter_conv_fprop(
     out_basis_layout);
 
   Tensor mXformedActGather = make_tensor(make_gmem_ptr(activations), xformed_act_composed_layout);
-  Tensor mXformedActIndex = make_tensor(make_gmem_ptr(gather_idx_buf), xformed_act_index_layout);
+  Tensor mGatherIndex = make_tensor(make_gmem_ptr(gather_idx_buf), gather_index_layout);
   Tensor mFilter = make_tensor(make_gmem_ptr(filter), filter_layout);
   Tensor mOutputScatter = make_tensor(make_gmem_ptr(output), out_composed_layout);  // (K, (N,Z,P,Q))
   Tensor mOutputRef  = make_tensor(make_gmem_ptr(output_ref), out_composed_layout);
@@ -269,7 +269,7 @@ int ampere_gather_scatter_conv_fprop(
   constexpr size_t smem_size = sizeof(typename AmpereUnpredicatedFprop::SharedStorage);
 
   print("xformed gather layout  ((N,Z,P,Q), (C,T,R,S)) = "); print(xformed_act_composed_layout); print("\n");
-  print("xformed index layout   ((N,Z,P,Q), (C,T,R,S)) = "); print(xformed_act_index_layout);    print("\n");
+  print("gather index layout    ((N,D,H,W), (C,1,1,1)) = "); print(gather_index_layout);         print("\n");
   print("Output  scatter layout ( K,        (N,Z,P,Q)) = "); print(out_composed_layout);         print("\n");
   print("Filter layout          ( K,        (C,T,R,S)) = "); print(filter_layout);               print("\n");
   print("gOutput_mn                                    = "); print(gOutput_mn);                  print("\n");
@@ -278,7 +278,7 @@ int ampere_gather_scatter_conv_fprop(
   std::cout << "smem_size = " << smem_size << std::endl;
 
   CHECK_CUDA(cudaFuncSetAttribute(
-    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActIndex), decltype(mOutputScatter)>,
+    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mGatherIndex), decltype(mOutputScatter)>,
     cudaFuncAttributeMaxDynamicSharedMemorySize,
     smem_size));
 
@@ -287,9 +287,9 @@ int ampere_gather_scatter_conv_fprop(
   CHECK_CUDA(cudaEventCreate(&stop));
   CHECK_CUDA(cudaEventRecord(start));
   for (int i = 0; i < num_iterations; ++i) {
-    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mXformedActIndex), decltype(mOutputScatter)>
+    kernel_entrypoint_custom<AmpereUnpredicatedFprop, decltype(mFilter), decltype(mXformedActGather), decltype(mGatherIndex), decltype(mOutputScatter)>
       <<<launch_grid, AmpereUnpredicatedFprop::MaxThreadsPerBlock, smem_size>>>(
-          mFilter, mXformedActGather, mXformedActIndex, mOutputScatter);
+          mFilter, mXformedActGather, mGatherIndex, mOutputScatter);
   }
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaEventSynchronize(stop));

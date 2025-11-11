@@ -75,6 +75,7 @@ struct AmpereUnpredicatedFprop {
   using PIPE  = _3;
   using TilerFlt = Shape<TileM, TileK>;
   using TilerAct = Shape<TileN, TileK>;
+  using TilerGIx = Shape<TileP, TileK>;
   using TilerOut = Shape<TileM, TileN>;
 
   using TileSizeM = Int<size(TileM{})>;
@@ -290,11 +291,11 @@ struct AmpereUnpredicatedFprop {
   //
   // Conv functor (predicated IGEMM)
   //
-  template <class EngineFlt, class TensorActivation, class TensorActivationIndex, class TensorOutput>
+  template <class EngineFlt, class TensorActivation, class TensorGatherIndex, class TensorOutput>
   void __device__
   operator()(cute::Tensor<EngineFlt, GmemLayoutFlt> mFlt, // ( K,        (C,T,R,S))
              TensorActivation                       mAct, // ((N,Z,P,Q), (C,T,R,S))
-             TensorActivationIndex                  mActI,// ((N,Z,P,Q), (C,T,R,S))
+             TensorGatherIndex                      mGIx, // ((N,Z,P,Q), (C,1,1,1))
              TensorOutput                           mOut, // ( K,        (N,Z,P,Q))
              char* smem_buf) const {
     using namespace cute;
@@ -321,35 +322,38 @@ struct AmpereUnpredicatedFprop {
 
     // Set up tensors
     // NOTE: blockIdx.x projects onto act-NDHW mode, y along the flt-K mode for the sake of higher dynamic range in NDHW
-    Tensor gA_mk  = local_tile( mFlt, TilerFlt{}, make_coord(_,_));                            // (BLK_M,BLK_K,m',k')
-    Tensor gB_nk  = local_tile( mAct, TilerAct{}, make_coord(_,_));                            // (BLK_N,BLK_K,n',_1)
-    Tensor gBi_nk = local_tile(mActI, TilerAct{}, make_coord(_,_));                            // (BLK_N,BLK_K,n',_1)
-    Tensor gC_mn  = local_tile( mOut, TilerOut{}, make_coord(_,_));                            // (BLK_M,BLK_N,m',n')
+    Tensor gA_mk = local_tile(mFlt, TilerFlt{}, make_coord(_,_));                            // (BLK_M,BLK_K,m',k')
+    Tensor gB_nk = local_tile(mAct, TilerAct{}, make_coord(_,_));                            // (BLK_N,BLK_K,n',_1)
+    Tensor gG_nk = local_tile(mGIx, TilerGIx{}, make_coord(_,_));                            // (BLK_N,BLK_K,n',_1)
+    Tensor gC_mn = local_tile(mOut, TilerOut{}, make_coord(_,_));                            // (BLK_M,BLK_N,m',n')
 
     // Compute m_coord and n_coord with their post-tiled shapes
     auto m_coord = idx2crd(int(blockIdx.y), shape<2>(gA_mk));
     auto n_coord = idx2crd(int(blockIdx.x), shape<2>(gB_nk));
-    Tensor gA  = gA_mk (_,_,m_coord,_);                                                        // (BLK_M,BLK_K,k')
-    Tensor gB  = gB_nk (_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
-    Tensor gBi = gBi_nk(_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
-    Tensor gC  = gC_mn (_,_,m_coord,n_coord);                                                  // (BLK_M,BLK_N)
+    Tensor gA = gA_mk(_,_,m_coord,_);                                                        // (BLK_M,BLK_K,k')
+    Tensor gB = gB_nk(_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
+    Tensor gG = gG_nk(_,_,n_coord,_);                                                        // (BLK_N,BLK_K,_1)
+    Tensor gC = gC_mn(_,_,m_coord,n_coord);                                                  // (BLK_M,BLK_N)
 
-    auto gather_idx_ptr = gBi.data();
-    auto sBi_ptr = &reinterpret_cast<SharedStorage*>(smem_buf)->mainloop.sBiMatrix[0];
+    static_assert(size(TileP{}) % MaxThreadsPerBlock == 0);
+    auto sG_ptr = &reinterpret_cast<SharedStorage*>(smem_buf)->mainloop.sBiMatrix[0];
+    auto gG_ptr = gG.data();
     for (int i = 0; i < sizeof(TileP{}); i += MaxThreadsPerBlock) {
-      sBi_ptr[i+threadIdx.x] = (gather_idx_ptr[i+threadIdx.x] != 0xffffffff);
-      if (sBi_ptr[i+threadIdx.x] == false) printf("Barf\n");
+      sG_ptr[i+threadIdx.x] = (gG[i+threadIdx.x] != 0xffffffff);
+      // if (sG_ptr[i+threadIdx.x] == false) printf("Barf\n");
     }
     __syncthreads();
+
 
 #if 0
     if ((threadIdx.x) == 0 && (blockIdx.x == 0) && (blockIdx.y == 0)) {        
         print("size(TileP{})=");print(size(TileP{}));print("\n");
-        print("shape(mActI)=");print(shape(mActI));print("\n");
-        print("shape(gBi_nk)=");print(shape(gBi_nk));print("\n");
-        print("shape(gBi)=");print(shape(gBi));print("\n");
-        Tensor dummy = gBi(0,_,0);
-        printf("gBi(0,_,0)=");print(gBi(0,_,0));print("\n");
+        print("shape(mGIx)=");print(shape(mGIx));print("\n");
+        print("shape(gG_nk)=");print(shape(gG_nk));print("\n");
+        print("shape(gG)=");print(shape(gG));print("\n");
+        print("stride(gG)=");print(stride(gG));print("\n");
+        Tensor dummy = gG(0,_,0);
+        printf("gG(0,_,0)=");print(gG(0,_,0));print("\n");
     }
     __syncthreads();
 #endif
@@ -362,7 +366,7 @@ struct AmpereUnpredicatedFprop {
       accum,
       gA,
       gB,
-      gBi,
+      gG,
       accum,
       k_tile_iter, k_tile_count,
       Underscore{}, // no residue since we do not support predication
