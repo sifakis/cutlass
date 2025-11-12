@@ -156,6 +156,7 @@ struct CollectiveMma<
     class TensorA,
     class TensorB,
     class TensorG,
+    class TensorP,
     class FrgTensorC,
     class KTileIterator,
     class ResidueMNK
@@ -166,6 +167,7 @@ struct CollectiveMma<
       TensorA gA,
       TensorB gB,
       TensorG gG,
+      TensorP sP,
       FrgTensorC const &src_accum,
       KTileIterator k_tile_iter, int k_tile_count,
       ResidueMNK residue_mnk,
@@ -178,6 +180,7 @@ struct CollectiveMma<
     static_assert(is_gmem<TensorA>::value,    "A tensor must be gmem resident.");
     static_assert(is_gmem<TensorB>::value,    "B tensor must be gmem resident.");
     static_assert(is_gmem<TensorG>::value,    "Gather index tensor must be gmem resident.");
+    static_assert(is_smem<TensorP>::value,    "Gather predicate tensor must be smem resident.");
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
     static_assert(cute::rank(SmemLayoutA{}) == 3,
       "MainloopSm80CpAsync must have a pipeline mode in the smem layout.");
@@ -209,6 +212,7 @@ struct CollectiveMma<
     Tensor tAsA = gmem_thr_copy_A.partition_D(sA);                             // (ACPY,ACPY_M,ACPY_K,PIPE)
     Tensor tBgB = gmem_thr_copy_B.partition_S(gB);                             // (BCPY,BCPY_N,BCPY_K,k)
     Tensor tBsB = gmem_thr_copy_B.partition_D(sB);                             // (BCPY,BCPY_N,BCPY_K,PIPE)
+    Tensor tBsP = gmem_thr_copy_B.partition_S(sP);                             // (BCPY,BCPY_N,BCPY_K,k)
     Tensor tBgBi = gmem_thr_copy_B.partition_S(gG);                           // (BCPY,BCPY_N,BCPY_K,k)
 
     //
@@ -220,14 +224,22 @@ struct CollectiveMma<
 
     Tensor tBpBi = make_tensor<bool>(make_shape(size<0>(tBgBi),size<1>(tBgBi),size<2>(tBgBi)));
     cute::fill(tBpBi, true);
-#if 0
+#if 1
     // print("pred_shape=");print(shape(tBpBi));print("\n");
     if ((threadIdx.x == 0) && (blockIdx.x == 0) && (blockIdx.y == 0) ){
+        // print("tBsP=");print_tensor(tBsP);print("\n");
+        // print("tBpBi=");print_tensor(tBpBi);print("\n");
         print("shape(gB)=");print(shape(gB));print("\n");
-        print("shape(gBi=");print(shape(gBi));print("\n");
+        // print("shape(gG)=");print(shape(gG));print("\n");
+        // print("shape(sP)=");print(shape(sP));print("\n");
+        print("shape(tBsP)=");print(shape(tBsP));print("\n");
+        // print("shape(tBgB)=");print(shape(tBgB));print("\n");
+        print("shape(tBpBi)=");print(shape(tBpBi));print("\n");
+        print("shape(tBgBi)=");print(shape(tBgBi));print("\n");
     //     print("shape(gBi=");print(shape(gBi));print("\n");
     //     print("shape(tBgG(_,_,_,0))=");print(shape(tBgG(_,_,_,0)));print("\n");
-    //     print("shape(tBgB(_,_,_,0))=");print(shape(tBgB(_,_,_,0)));print("\n");
+        print("shape(tBgB(_,_,_,0))=");print(shape(tBgB(_,_,_,0)));print("\n");
+        print("shape(tBsB(_,_,_,0))=");print(shape(tBsB(_,_,_,0)));print("\n");
     }
     __syncthreads();
 #endif
@@ -238,13 +250,13 @@ struct CollectiveMma<
     // Start async loads for all pipes but the last
     CUTLASS_PRAGMA_UNROLL
     for (int k_pipe = 0; k_pipe < DispatchPolicy::Stages-1; ++k_pipe) {
-      // Tensor tBgBi_slice = tBgBi(_,_,_,*k_tile_iter);  
+      // Tensor tBsP_slice = tBsP(_,_,_,*k_tile_iter);  
       // CUTLASS_PRAGMA_UNROLL
       // for (int i = 0; i < size(tBpBi); i++) {
-      //   tBpBi(i) = (tBgBi_slice(i) != 0xffffffff);
+      //     tBpBi(i) = tBsP_slice(i);
       // }
-      copy   (gmem_tiled_copy_A,        tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,k_pipe));
-      copy_if(gmem_tiled_copy_B, tBpBi, tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
+      copy   (gmem_tiled_copy_A,                           tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,k_pipe));
+      copy_if(gmem_tiled_copy_B, tBpBi                   , tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
       cp_async_fence();
       --k_tile_count;
       if (k_tile_count > 0) { ++k_tile_iter; }

@@ -339,14 +339,23 @@ struct AmpereUnpredicatedFprop {
     auto sG_ptr = &reinterpret_cast<SharedStorage*>(smem_buf)->mainloop.sBiMatrix[0];
     auto gG_ptr = gG.data();
     for (int i = 0; i < sizeof(TileP{}); i += MaxThreadsPerBlock) {
-      sG_ptr[i+threadIdx.x] = (gG[i+threadIdx.x] != 0xffffffff);
-      // if (sG_ptr[i+threadIdx.x] == false) printf("Barf\n");
+      sG_ptr[i+threadIdx.x] = (gG(i+threadIdx.x) != 0xffffffff);
     }
     __syncthreads();
 
-
+    auto gather_predicate_layout = make_layout(
+      shape(gB),
+      make_stride(
+        make_stride(D{}*H{}*W{}, H{}*W{},  W{}, _1{}),
+        make_stride(       _0{},    _0{}, _0{}, _0{}),
+        make_stride(       _0{}, H{}*W{},  W{}, _1{})));
+    Tensor sP = make_tensor(make_smem_ptr(sG_ptr), gather_predicate_layout);
+    
 #if 0
     if ((threadIdx.x) == 0 && (blockIdx.x == 0) && (blockIdx.y == 0)) {        
+        print("shape(sP)=");print(shape(sP));print("\n");
+        print("stride(sP)=");print(stride(sP));print("\n");
+        print("cosize(sP)=");print(cosize(layout(sP)));print("\n");
         print("size(TileP{})=");print(size(TileP{}));print("\n");
         print("shape(mGIx)=");print(shape(mGIx));print("\n");
         print("shape(gG_nk)=");print(shape(gG_nk));print("\n");
@@ -358,6 +367,7 @@ struct AmpereUnpredicatedFprop {
     __syncthreads();
 #endif
 
+    
     auto k_tile_iter = cute::make_coord_iterator(size<2>(gA));
     int k_tile_count = size<2>(gA);
 
@@ -367,6 +377,7 @@ struct AmpereUnpredicatedFprop {
       gA,
       gB,
       gG,
+      sP,
       accum,
       k_tile_iter, k_tile_count,
       Underscore{}, // no residue since we do not support predication
