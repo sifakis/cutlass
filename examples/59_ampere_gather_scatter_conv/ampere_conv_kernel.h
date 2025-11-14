@@ -338,7 +338,7 @@ struct AmpereUnpredicatedFprop {
     static_assert(size(TileP{}) % MaxThreadsPerBlock == 0);
     auto sG_ptr = &reinterpret_cast<SharedStorage*>(smem_buf)->mainloop.sBiMatrix[0];
     auto gG_ptr = gG.data();
-    for (int i = 0; i < sizeof(TileP{}); i += MaxThreadsPerBlock) {
+    for (int i = 0; i < size(TileP{}); i += MaxThreadsPerBlock) {
       sG_ptr[i+threadIdx.x] = (gG(i+threadIdx.x) != 0xffffffff);
     }
     __syncthreads();
@@ -376,7 +376,6 @@ struct AmpereUnpredicatedFprop {
       accum,
       gA,
       gB,
-      gG,
       sP,
       accum,
       k_tile_iter, k_tile_count,

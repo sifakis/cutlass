@@ -155,7 +155,6 @@ struct CollectiveMma<
     class FrgTensorD,
     class TensorA,
     class TensorB,
-    class TensorG,
     class TensorP,
     class FrgTensorC,
     class KTileIterator,
@@ -166,7 +165,6 @@ struct CollectiveMma<
       FrgTensorD &accum,
       TensorA gA,
       TensorB gB,
-      TensorG gG,
       TensorP sP,
       FrgTensorC const &src_accum,
       KTileIterator k_tile_iter, int k_tile_count,
@@ -179,7 +177,6 @@ struct CollectiveMma<
     static_assert(is_rmem<FrgTensorD>::value, "D tensor must be rmem resident.");
     static_assert(is_gmem<TensorA>::value,    "A tensor must be gmem resident.");
     static_assert(is_gmem<TensorB>::value,    "B tensor must be gmem resident.");
-    static_assert(is_gmem<TensorG>::value,    "Gather index tensor must be gmem resident.");
     static_assert(is_smem<TensorP>::value,    "Gather predicate tensor must be smem resident.");
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
     static_assert(cute::rank(SmemLayoutA{}) == 3,
@@ -195,9 +192,9 @@ struct CollectiveMma<
     CUTE_STATIC_ASSERT_V(size<0>(gA) == size<0>(sA));                          // BLK_M
     CUTE_STATIC_ASSERT_V(size<1>(gA) == size<1>(sA));                          // BLK_K
     CUTE_STATIC_ASSERT_V(size<0>(gB) == size<0>(sB));                          // BLK_N
-    // CUTE_STATIC_ASSERT_V(size<0>(gG) == size<0>(gB));                          // BLK_N
+    CUTE_STATIC_ASSERT_V(size<0>(gB) == size<0>(sP));                          // BLK_N
     CUTE_STATIC_ASSERT_V(size<1>(gB) == size<1>(sB));                          // BLK_K
-    CUTE_STATIC_ASSERT_V(size<1>(gG) == size<1>(gB));                          // BLK_K
+    CUTE_STATIC_ASSERT_V(size<1>(gB) == size<1>(sP));                          // BLK_K
     CUTE_STATIC_ASSERT_V(size<1>(sA) == size<1>(sB));                          // BLK_K
     CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sA));        // PIPE
     CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sB));        // PIPE
@@ -213,7 +210,6 @@ struct CollectiveMma<
     Tensor tBgB = gmem_thr_copy_B.partition_S(gB);                             // (BCPY,BCPY_N,BCPY_K,k)
     Tensor tBsB = gmem_thr_copy_B.partition_D(sB);                             // (BCPY,BCPY_N,BCPY_K,PIPE)
     Tensor tBsP = gmem_thr_copy_B.partition_S(sP);                             // (BCPY,BCPY_N,BCPY_K,k)
-    Tensor tBgBi = gmem_thr_copy_B.partition_S(gG);                           // (BCPY,BCPY_N,BCPY_K,k)
 
     //
     // PREDICATES
@@ -222,55 +218,6 @@ struct CollectiveMma<
     (void) residue_mnk;
     //assert(residue_mnk == make_tuple(0,0,0));
 
-    // Tensor tBpBi = make_tensor<bool>(make_shape(size<0>(tBgBi),size<1>(tBgBi),size<2>(tBgBi)));
-    Tensor tBpBi = make_tensor<bool>(make_shape(size<0>(tBsP),size<1>(tBsP),size<2>(tBsP)));
-    cute::fill(tBpBi, true);
-#if 1
-    // print("pred_shape=");print(shape(tBpBi));print("\n");
-    if ((threadIdx.x == 0) && (blockIdx.x == 0) && (blockIdx.y == 0) ){
-        print("tBsP=");print_tensor(tBsP);print("\n");
-        // print("tBpBi=");print_tensor(tBpBi);print("\n");
-        print("shape(gB)=");print(shape(gB));print("\n");
-        print("shape(sP)=");print(shape(sP));print("\n");
-        print("stride(sP)=");print(stride(sP));print("\n");
-        print("cosize(sP)=");print(cute::cosize(cute::layout(sP)));print("\n");
-        auto coord_it = cute::make_coord_iterator(cute::shape(sP));
-        for (int k = 0; k < cute::size(cute::shape(sP)); ++k, ++coord_it){
-            if ( sP(*coord_it) == false ) {
-                print(*coord_it);print("contains FALSE entry\n");
-                break;
-            }
-        }
-        print("shape(tBgB)=");print(shape(tBgB));print("\n");
-        print("shape(tBsP)=");print(shape(tBsP));print("\n");
-        print("shape(tBgB(_,_,_,0))=");print(shape(tBgB(_,_,_,0)));print("\n");
-        print("shape(tBsP(_,_,_,0))=");print(shape(tBsP(_,_,_,0)));print("\n");
-        
-        print("shape(tBpBi)=");print(shape(tBpBi));print("\n");
-        print("shape(tBgBi)=");print(shape(tBgBi));print("\n");
-    //     print("shape(gBi=");print(shape(gBi));print("\n");
-    //     print("shape(tBgG(_,_,_,0))=");print(shape(tBgG(_,_,_,0)));print("\n");
-    }
-    __syncthreads();
-#endif
-
-    if (0){
-        int failure = false;
-        for (int k = 0; k < 54; k++) {
-            Tensor tBsP_slice = tBsP(_,_,_,k);
-            if (size(tBsP_slice) != size(tBpBi)) printf("Barf#1\n");
-            for (int i = 0; i < size(tBsP_slice); i++)
-                if (tBsP_slice(i) != true){
-                    failure = true;
-                    break;
-                }
-            if (failure) break;
-        }
-        if (failure) {
-            printf("Failure detected at threadIdx.x = %d, blockIdx.x = %d, blockIdx.y = %d\n", threadIdx.x, blockIdx.x, blockIdx.y);
-        }
-    }
-
     //
     // PREFETCH
     //
@@ -278,15 +225,8 @@ struct CollectiveMma<
     // Start async loads for all pipes but the last
     CUTLASS_PRAGMA_UNROLL
     for (int k_pipe = 0; k_pipe < DispatchPolicy::Stages-1; ++k_pipe) {
-      // Tensor tBsP_slice = tBsP(_,_,_,*k_tile_iter);  
-      // CUTLASS_PRAGMA_UNROLL
-      // for (int i = 0; i < size(tBpBi); i++) {
-      //     if (tBpBi(i) != true) print("barf #1\n");
-      //     //if (tBsP_slice(i) != true) print("barf #2\n");
-      // }
       copy   (gmem_tiled_copy_A,                           tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,k_pipe));
-      copy_if(gmem_tiled_copy_B, tBpBi,                    tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
-      // copy_if(gmem_tiled_copy_B, tBsP(_,_,_,*k_tile_iter), tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
+      copy_if(gmem_tiled_copy_B, tBsP(_,_,_,*k_tile_iter), tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,k_pipe));
       cp_async_fence();
       --k_tile_count;
       if (k_tile_count > 0) { ++k_tile_iter; }
@@ -380,13 +320,8 @@ struct CollectiveMma<
         // Copy gmem to smem before computing gemm on each k-pipe
         if (k_block == 0)
         {
-          // Tensor tBgBi_slice = tBgBi(_,_,_,*k_tile_iter);  
-          // CUTLASS_PRAGMA_UNROLL
-          //   for (int i = 0; i < size(tBpBi); i++) {
-          //     tBpBi(i) = (tBgBi_slice(i) != 0xffffffff);
-          //   }
-          copy   (gmem_tiled_copy_A,        tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,smem_pipe_write));
-          copy_if(gmem_tiled_copy_B, tBpBi, tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,smem_pipe_write));
+          copy   (gmem_tiled_copy_A,                           tAgA(_,_,_,*k_tile_iter), tAsA(_,_,_,smem_pipe_write));
+          copy_if(gmem_tiled_copy_B, tBsP(_,_,_,*k_tile_iter), tBgB(_,_,_,*k_tile_iter), tBsB(_,_,_,smem_pipe_write));
           cp_async_fence();
 
           // Advance the tile
