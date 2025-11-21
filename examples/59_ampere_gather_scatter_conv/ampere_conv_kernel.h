@@ -113,7 +113,7 @@ struct AmpereUnpredicatedFprop {
 
   using GmemLayoutFlt = decltype(make_ordered_layout(
     Shape< K, Shape< C, T, R, S>>{},
-    tuple<_4, tuple<_0,_3,_2,_1>>{}));
+    tuple<_1, tuple<_0,_4,_3,_2>>{}));
 
   // We have 64 elements * 32b each in the major mode that we can vectorize
   // Max vector size is 128b, so lay 16 threads along the major mode with a vector size of 4
